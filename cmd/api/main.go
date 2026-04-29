@@ -1,0 +1,89 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"uptime-monitor/internal/logger"
+	"uptime-monitor/internal/models"
+	"uptime-monitor/internal/storage"
+
+	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+var db *gorm.DB
+
+func main() {
+	logger.InitLogger()
+	defer logger.Log.Sync()
+
+	dsn := "postgres://user:pass@localhost:5432/uptime?sslmode=disable"
+	db = storage.InitDB(dsn)
+	r := mux.NewRouter()
+
+	r.Use(loggingMiddleware)
+	r.HandleFunc("/sites", addSite).Methods(http.MethodPost)
+	r.HandleFunc("/sites", getSites).Methods(http.MethodGet)
+	r.HandleFunc("/sites/{id:[0-9]+}/stats", getSiteStats).Methods(http.MethodGet)
+	logger.Log.Info("API сервис запущен на порту :8080")
+	if err := http.ListenAndServe(":8080", r); err != nil {
+		logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
+	}
+}
+
+
+func addSite(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	site := models.Website{URL: input.URL}
+	if err := db.Create(&site).Error; err != nil {
+		logger.Log.Error("Ошибка создания сайта", zap.Error(err))
+		http.Error(w, "Ошибка БД", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(site)
+}
+
+func getSites(w http.ResponseWriter, r *http.Request) {
+	var sites[]models.Website
+	db.Find(&sites)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sites)
+}
+
+
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Log.Info("Входящий запрос", 
+			zap.String("method", r.Method), 
+			zap.String("url", r.URL.String()),
+		)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func getSiteStats(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	siteID := vars["id"]
+
+	var stats []models.PingResult
+	if err := db.Where("website_id = ?", siteID).Order("checked_at DESC").Limit(50).Find(&stats).Error; err != nil {
+		http.Error(w, "Ошибка получения статистики", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
