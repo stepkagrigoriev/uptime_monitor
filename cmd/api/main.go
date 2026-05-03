@@ -62,14 +62,20 @@ func main() {
 
 func addSite(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		URL string `json:"url"`
+		URL             string `json:"url"`
+		IntervalSeconds int    `json:"interval_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	site := models.Website{URL: input.URL}
+	if input.IntervalSeconds < 1 {
+		input.IntervalSeconds = 60
+	}
+	site := models.Website{
+		URL:             input.URL,
+		IntervalSeconds: input.IntervalSeconds,
+	}
 	if err := db.Create(&site).Error; err != nil {
 		logger.Log.Error("Ошибка создания сайта", zap.Error(err))
 		http.Error(w, "Ошибка БД", http.StatusInternalServerError)

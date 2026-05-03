@@ -49,7 +49,8 @@ func main() {
 func checkAllSites(db *gorm.DB, client *http.Client) {
 	logger.Log.Info("Запуск цикла проверки")
 	var sites []models.Website
-	if err := db.Where("is_active = ?", true).Find(&sites).Error; err != nil {
+	err := db.Where("is_active = ? AND (last_checked_at IS NULL OR last_checked_at + (interval_seconds || ' seconds')::interval <= NOW())", true).Find(&sites).Error
+	if err != nil {
 		logger.Log.Error("Ошибка получения сайтов из БД", zap.Error(err))
 		return
 	}
@@ -81,6 +82,9 @@ func checkAllSites(db *gorm.DB, client *http.Client) {
 
 			if err := db.Create(&result).Error; err != nil {
 				logger.Log.Error("Ошибка записи результата", zap.Error(err))
+			}
+			if err := db.Model(&s).Update("last_checked_at", time.Now()).Error; err != nil {
+				logger.Log.Error("Ошибка обновления последней даты проверки", zap.Error(err))
 			}
 		}(site)
 	}
