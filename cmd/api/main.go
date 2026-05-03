@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"uptime-monitor/internal/logger"
 	"uptime-monitor/internal/models"
@@ -30,10 +35,28 @@ func main() {
 	r.HandleFunc("/sites/{id:[0-9]+}", deleteSite).Methods(http.MethodDelete)
 	r.HandleFunc("/sites/{id:[0-9]+}/status", updateSiteStatus).Methods(http.MethodPatch)
 	r.HandleFunc("/sites/{id:[0-9]+}/analytics", getSiteAnalytics).Methods(http.MethodGet)
-	logger.Log.Info("API сервис запущен на порту :8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
-		logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
 	}
+	go func() {
+		logger.Log.Info("API сервис запущен на порту :8080")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	logger.Log.Info("Получен сигнал остановки")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Log.Fatal("Ошибка при остановке сервера", zap.Error(err))
+	}
+	sqlDB, _ := db.DB()
+	sqlDB.Close()
+	logger.Log.Info("API остановлен")
 }
 
 
