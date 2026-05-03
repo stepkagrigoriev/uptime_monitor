@@ -27,6 +27,9 @@ func main() {
 	r.HandleFunc("/sites", addSite).Methods(http.MethodPost)
 	r.HandleFunc("/sites", getSites).Methods(http.MethodGet)
 	r.HandleFunc("/sites/{id:[0-9]+}/stats", getSiteStats).Methods(http.MethodGet)
+	r.HandleFunc("/sites/{id:[0-9]+}", deleteSite).Methods(http.MethodDelete)
+	r.HandleFunc("/sites/{id:[0-9]+}/status", updateSiteStatus).Methods(http.MethodPatch)
+	r.HandleFunc("/sites/{id:[0-9]+}/analytics", getSiteAnalytics).Methods(http.MethodGet)
 	logger.Log.Info("API сервис запущен на порту :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil {
 		logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
@@ -54,6 +57,7 @@ func addSite(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(site)
 }
 
+
 func getSites(w http.ResponseWriter, r *http.Request) {
 	var sites[]models.Website
 	db.Find(&sites)
@@ -61,7 +65,6 @@ func getSites(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sites)
 }
-
 
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -73,6 +76,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 
 func getSiteStats(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -86,4 +90,63 @@ func getSiteStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+
+func deleteSite(w http.ResponseWriter, r *http.Request) {
+	siteID := mux.Vars(r)["id"]
+	db.Where("website_id = ?", siteID).Delete(&models.PingResult{})
+	if err := db.Delete(&models.Website{}, siteID).Error; err != nil {
+		http.Error(w, "Ошибка при удалении", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent) 
+}
+
+
+func updateSiteStatus(w http.ResponseWriter, r *http.Request) {
+	siteID := mux.Vars(r)["id"]
+
+	var input struct {
+		IsActive bool `json:"is_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Неверный JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.Model(&models.Website{}).Where("id = ?", siteID).Update("is_active", input.IsActive).Error; err != nil {
+		http.Error(w, "Ошибка обновления", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+
+func getSiteAnalytics(w http.ResponseWriter, r *http.Request) {
+	siteID := mux.Vars(r)["id"]
+
+	var totalPings int64
+	var successfulPings int64
+	var avgResponseTime float64
+
+	db.Model(&models.PingResult{}).Where("website_id = ?", siteID).Count(&totalPings)
+
+	if totalPings == 0 {
+		http.Error(w, "Нет данных для аналитики", http.StatusNotFound)
+		return
+	}
+
+	db.Model(&models.PingResult{}).Where("website_id = ? AND status_code >= 200 AND status_code < 300", siteID).Count(&successfulPings)
+	db.Model(&models.PingResult{}).Where("website_id = ?", siteID).Select("COALESCE(AVG(response_time_ms), 0)").Scan(&avgResponseTime)
+
+	uptime := (float64(successfulPings) / float64(totalPings)) * 100
+	response := map[string]interface{}{
+		"website_id":           siteID,
+		"total_checks":         totalPings,
+		"uptime_percent":       uptime,
+		"avg_response_time_ms": avgResponseTime,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

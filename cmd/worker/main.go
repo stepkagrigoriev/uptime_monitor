@@ -27,7 +27,7 @@ func main() {
 	for range ticker.C {
 		logger.Log.Info("Запуск цикла проверки...")
 		var sites []models.Website
-		if err := db.Find(&sites).Error; err != nil {
+		if err := db.Where("is_active = ?", true).Find(&sites).Error; err != nil {
 			logger.Log.Error("Ошибка получения сайтов из БД", zap.Error(err))
 			continue
 		}
