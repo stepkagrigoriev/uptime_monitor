@@ -26,11 +26,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger.Log.Info("Воркер запущен. Начинаем мониторинг")
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	pingTicker := time.NewTicker(5 * time.Second)
+	defer pingTicker.Stop()
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+	defer cleanupTicker.Stop()
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
+	go cleanupOldData(db, 7)
 	for {
 		select {
 		case <-ctx.Done(): 
@@ -39,8 +42,10 @@ func main() {
 			sqlDB.Close()
 			logger.Log.Info("Воркер успешно остановлен")
 			return
-		case <-ticker.C: 
+		case <-pingTicker.C: 
 			checkAllSites(db, client)
+		case <-cleanupTicker.C:
+			cleanupOldData(db, 7)
 		}
 	}
 }
@@ -90,4 +95,16 @@ func checkAllSites(db *gorm.DB, client *http.Client) {
 	}
 	wg.Wait()
 	logger.Log.Info("Все проверки завершены")
+}
+
+
+func cleanupOldData(db *gorm.DB, daysToKeep int) {
+	logger.Log.Info("Начинается очистка старых данных")
+	cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
+	result := db.Where("checked_at < ?", cutoffTime).Delete(&models.PingResult{})
+	if result.Error != nil {
+		logger.Log.Error("Ошибка при очистке старых данных", zap.Error(result.Error))
+		return
+	}
+	logger.Log.Info("Очистка завершена", zap.Int64("удалено_строк", result.RowsAffected))
 }
