@@ -11,13 +11,14 @@ import (
 	"uptime-monitor/internal/logger"
 	"uptime-monitor/internal/storage"
 	"uptime-monitor/internal/worker"
+	"uptime-monitor/internal/config"
 )
 
 func main() {
 	logger.InitLogger()
 	defer logger.Log.Sync()
-
-	db := storage.InitDB("postgres://postgres:pass@localhost:5432/uptime?sslmode=disable")
+	cfg := config.LoadConfig()
+	db := storage.InitDB(cfg.DBURL)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	pingTicker := time.NewTicker(5 * time.Second)

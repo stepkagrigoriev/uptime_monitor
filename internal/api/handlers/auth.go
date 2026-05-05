@@ -11,10 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-var jwtKey = []byte("secret_hehe")
-
 type AuthHandler struct {
 	DB *gorm.DB
+	JWTSecret string
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +56,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	tokenString, _ := token.SignedString(jwtKey)
+	tokenString, _ := token.SignedString([]byte(h.JWTSecret))
 	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
 }

@@ -12,6 +12,7 @@ import (
 	"uptime-monitor/internal/api/middleware"
 	"uptime-monitor/internal/logger"
 	"uptime-monitor/internal/storage"
+	"uptime-monitor/internal/config"
 
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -20,19 +21,20 @@ import (
 func main() {
 	logger.InitLogger()
 	defer logger.Log.Sync()
+	cfg := config.LoadConfig()
 
 	db := storage.InitDB("postgres://postgres:pass@localhost:5432/uptime?sslmode=disable")
 	h := handlers.NewSiteHandler(db)
 
 	r := mux.NewRouter()
 	r.Use(middleware.Logging)
-	authH := handlers.AuthHandler{DB: db}
+	authH := handlers.AuthHandler{DB: db, JWTSecret: cfg.JWTSecret}
 	
 	r.HandleFunc("/register", authH.Register).Methods(http.MethodPost)
 	r.HandleFunc("/login", authH.Login).Methods(http.MethodPost)
 
 	api := r.PathPrefix("/api").Subrouter()
-	api.Use(middleware.Auth)
+	api.Use(middleware.Auth(cfg.JWTSecret))
 	api.HandleFunc("/sites", h.AddSite).Methods(http.MethodPost)
 	api.HandleFunc("/sites", h.GetSites).Methods(http.MethodGet)
 	api.HandleFunc("/sites/{id:[0-9]+}/stats", h.GetSiteStats).Methods(http.MethodGet)
