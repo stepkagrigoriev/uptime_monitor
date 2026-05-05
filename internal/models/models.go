@@ -2,12 +2,21 @@ package models
 
 import "time"
 
+type User struct {
+	ID       uint   `gorm:"primarykey" json:"id"`
+	Email    string `gorm:"uniqueIndex;not null" json:"email"`
+	Password string `gorm:"not null" json:"-"`
+	Websites []Website `json:"websites,omitempty"`
+}
+
+
 type Website struct {
 	ID              uint      `gorm:"primarykey" json:"id"`
 	URL             string    `gorm:"uniqueIndex;not null" json:"url"`
 	IsActive        bool      `gorm:"default:true" json:"is_active"`
 	IntervalSeconds int       `gorm:"default:60" json:"interval_seconds"` 
-	LastCheckedAt   time.Time `json:"last_checked_at"`                    
+	LastCheckedAt   time.Time `json:"last_checked_at"`             
+	UserID          uint      `gorm:"not null" json:"user_id"` 
 	CreatedAt       time.Time `json:"created_at"`
 }
 

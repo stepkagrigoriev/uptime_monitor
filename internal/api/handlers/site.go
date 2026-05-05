@@ -19,13 +19,19 @@ func NewSiteHandler(db *gorm.DB) *SiteHandler {
 	return &SiteHandler{DB: db}
 }
 
+func (h *SiteHandler) getUserID(r *http.Request) uint {
+	return r.Context().Value("user_id").(uint)
+}
+
 func (h *SiteHandler) AddSite(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
+
 	var input struct {
 		URL             string `json:"url"`
 		IntervalSeconds int    `json:"interval_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Неверный формат данных", http.StatusBadRequest)
 		return
 	}
 
@@ -33,10 +39,14 @@ func (h *SiteHandler) AddSite(w http.ResponseWriter, r *http.Request) {
 		input.IntervalSeconds = 60
 	}
 
-	site := models.Website{URL: input.URL, IntervalSeconds: input.IntervalSeconds}
+	site := models.Website{
+		URL:             input.URL,
+		IntervalSeconds: input.IntervalSeconds,
+		UserID:          userID,
+	}
 	if err := h.DB.Create(&site).Error; err != nil {
-		logger.Log.Error("Ошибка БД", zap.Error(err))
-		http.Error(w, "Ошибка БД", http.StatusInternalServerError)
+		logger.Log.Error("Ошибка при сохранении сайта в БД", zap.Error(err))
+		http.Error(w, "Ошибка базы данных", http.StatusInternalServerError)
 		return
 	}
 
@@ -46,16 +56,23 @@ func (h *SiteHandler) AddSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiteHandler) GetSites(w http.ResponseWriter, r *http.Request) {
-	var sites[]models.Website
-	h.DB.Find(&sites)
+	userID := h.getUserID(r)
+	var sites []models.Website
+
+	h.DB.Where("user_id = ?", userID).Find(&sites)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sites)
 }
 
 func (h *SiteHandler) GetSiteStats(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
 	siteID := mux.Vars(r)["id"]
-	var stats[]models.PingResult
-
+	var site models.Website
+	if err := h.DB.Where("id = ? AND user_id = ?", siteID, userID).First(&site).Error; err != nil {
+		http.Error(w, "Сайт не найден или доступ запрещен", http.StatusNotFound)
+		return
+	}
+	var stats []models.PingResult
 	h.DB.Where("website_id = ?", siteID).Order("checked_at DESC").Limit(50).Find(&stats)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -63,31 +80,53 @@ func (h *SiteHandler) GetSiteStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SiteHandler) DeleteSite(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
 	siteID := mux.Vars(r)["id"]
+	result := h.DB.Where("id = ? AND user_id = ?", siteID, userID).First(&models.Website{})
+	if result.Error != nil {
+		http.Error(w, "Сайт не найден или доступ запрещен", http.StatusNotFound)
+		return
+	}
 	h.DB.Where("website_id = ?", siteID).Delete(&models.PingResult{})
 	h.DB.Delete(&models.Website{}, siteID)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SiteHandler) UpdateSiteStatus(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
 	siteID := mux.Vars(r)["id"]
 	var input struct {
 		IsActive bool `json:"is_active"`
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Неверный формат JSON", http.StatusBadRequest)
+		return
+	}
+	result := h.DB.Model(&models.Website{}).Where("id = ? AND user_id = ?", siteID, userID).Update("is_active", input.IsActive)
+	if result.Error != nil || result.RowsAffected == 0 {
+		http.Error(w, "Сайт не найден или доступ запрещен", http.StatusNotFound)
+		return
+	}
 
-	h.DB.Model(&models.Website{}).Where("id = ?", siteID).Update("is_active", input.IsActive)
 	w.WriteHeader(http.StatusOK)
 }
 
 func (h *SiteHandler) GetSiteAnalytics(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
 	siteID := mux.Vars(r)["id"]
+	var site models.Website
+	if err := h.DB.Where("id = ? AND user_id = ?", siteID, userID).First(&site).Error; err != nil {
+		http.Error(w, "Сайт не найден или доступ запрещен", http.StatusNotFound)
+		return
+	}
+
 	var totalPings, successfulPings int64
 	var avgResponseTime float64
 
 	h.DB.Model(&models.PingResult{}).Where("website_id = ?", siteID).Count(&totalPings)
 	if totalPings == 0 {
-		http.Error(w, "Нет данных", http.StatusNotFound)
+		http.Error(w, "Нет данных для аналитики", http.StatusNotFound)
 		return
 	}
 
@@ -96,8 +135,10 @@ func (h *SiteHandler) GetSiteAnalytics(w http.ResponseWriter, r *http.Request) {
 
 	uptime := (float64(successfulPings) / float64(totalPings)) * 100
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"website_id":           siteID,
+		"url":                  site.URL,
 		"total_checks":         totalPings,
 		"uptime_percent":       uptime,
 		"avg_response_time_ms": avgResponseTime,

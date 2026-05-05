@@ -26,13 +26,19 @@ func main() {
 
 	r := mux.NewRouter()
 	r.Use(middleware.Logging)
+	authH := handlers.AuthHandler{DB: db}
+	
+	r.HandleFunc("/register", authH.Register).Methods(http.MethodPost)
+	r.HandleFunc("/login", authH.Login).Methods(http.MethodPost)
 
-	r.HandleFunc("/sites", h.AddSite).Methods(http.MethodPost)
-	r.HandleFunc("/sites", h.GetSites).Methods(http.MethodGet)
-	r.HandleFunc("/sites/{id:[0-9]+}/stats", h.GetSiteStats).Methods(http.MethodGet)
-	r.HandleFunc("/sites/{id:[0-9]+}", h.DeleteSite).Methods(http.MethodDelete)
-	r.HandleFunc("/sites/{id:[0-9]+}/status", h.UpdateSiteStatus).Methods(http.MethodPatch)
-	r.HandleFunc("/sites/{id:[0-9]+}/analytics", h.GetSiteAnalytics).Methods(http.MethodGet)
+	api := r.PathPrefix("/api").Subrouter()
+	api.Use(middleware.Auth)
+	api.HandleFunc("/sites", h.AddSite).Methods(http.MethodPost)
+	api.HandleFunc("/sites", h.GetSites).Methods(http.MethodGet)
+	api.HandleFunc("/sites/{id:[0-9]+}/stats", h.GetSiteStats).Methods(http.MethodGet)
+	api.HandleFunc("/sites/{id:[0-9]+}", h.DeleteSite).Methods(http.MethodDelete)
+	api.HandleFunc("/sites/{id:[0-9]+}/status", h.UpdateSiteStatus).Methods(http.MethodPatch)
+	api.HandleFunc("/sites/{id:[0-9]+}/analytics", h.GetSiteAnalytics).Methods(http.MethodGet)
 
 	server := &http.Server{Addr: ":8080", Handler: r}
 
